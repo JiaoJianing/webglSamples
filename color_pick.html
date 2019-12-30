@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Float Texture</title>
+		<style>
+		</style>
+	</head>
+	
+	<body onload="main()">
+		<canvas id="webgl", width="1920", height="900">
+			Please use a browser that supports "canvas"
+		</canvas>
+		<script src="./lib/webgl-utils.js"></script>
+		<script src="./lib/webgl-debug.js"></script>
+		<script src="./lib/cuon-utils.js"></script>
+		<script src="./lib/cuon-matrix.js"></script>
+		<script>
+			var VSHADER_SOURCE = 
+				'attribute vec4 a_Position;'+
+				'uniform mat4 modelMatrix;'+
+				'void main()'+
+				'{'+
+				'	gl_Position = modelMatrix * a_Position;'+
+				'}';
+
+			var FSHADER_SOURCE = 
+				'precision mediump float;'+
+				'void main()'+
+				'{'+
+				'	gl_FragColor = vec4(1.0, 1.0, 0.0, 0.5);'+
+				'}';
+				
+			var PICK_VSHADER_SOURCE = 	
+				'attribute vec4 a_Position;'+
+				'varying vec3 worldPosition;'+
+				'uniform mat4 modelMatrix;'+
+				'void main()'+
+				'{'+
+				'	gl_Position = modelMatrix * a_Position;'+
+				'	worldPosition = vec3(modelMatrix * a_Position);'+
+				'}';
+				
+			var PICK_FSHADER_SOURCE = 	
+				'precision mediump float;'+
+				'uniform float pickID;'+
+				'varying vec3 worldPosition;'+
+				'void main()'+
+				'{'+
+				'	gl_FragColor = vec4(pickID, worldPosition.x, worldPosition.y, worldPosition.z);'+
+				'}';
+
+			function main() {
+				var canvas = document.getElementById('webgl');
+				if (!canvas){
+					console.log('Failed to retrieve the <canvas> element');
+					return;
+				}
+
+				var gl = getWebGLContext(canvas);
+				if (!gl){
+					console.log('Failed to get the rendering context for WebGL');
+					return;
+				}
+				
+				var program = initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE);
+				if (!program){
+					console.log('Failed to initialize shaders.');
+					return;
+				}
+				
+				var mMatrixLocation = gl.getUniformLocation(program, "modelMatrix");
+				
+				var pickProgram = initShaders(gl, PICK_VSHADER_SOURCE, PICK_FSHADER_SOURCE);	
+				if (!pickProgram){
+					console.log('Failed to initialize pick shaders.');
+					return;
+				}
+				
+				var pickMMatrixLocation = gl.getUniformLocation(pickProgram, "modelMatrix");
+				var pickIDLocation = gl.getUniformLocation(pickProgram, "pickID");
+				
+				gl.getExtension('EXT_color_buffer_float');
+				
+				var vertices = new Float32Array([-0.5, -0.5, 0.5, -0.5, 0.0, 1.0]);
+				var vertexBuffer = gl.createBuffer();
+				if (!vertexBuffer)
+				{
+					console.log('Failed to create vertex buffer');
+					return;
+				}
+				
+				gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+				gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+				
+				var a_Position = gl.getAttribLocation(gl.program, 'a_Position');
+				if (a_Position < 0)
+				{
+					console.log('Failed to get the storage location of a_Position');
+					return;
+				}
+				
+				gl.vertexAttribPointer(a_Position, 2, gl.FLOAT, false, 0, 0);
+				gl.enableVertexAttribArray(a_Position);
+				
+				var m1 = new Matrix4();
+				var m2 = new Matrix4();
+				
+				var draw = function(pickMode) {
+					gl.clearColor(0, 0, 0, 1);
+					gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+					
+					m1.setTranslate(-0.5, 0.0, 0.0);
+					m1.scale(0.5, 0.5, 0.5);
+					if (pickMode)
+					{
+						gl.uniformMatrix4fv(pickMMatrixLocation, gl.FALSE, m1.elements);
+						gl.uniform1f(pickIDLocation, 1.0);
+					}
+					else
+					{
+						gl.uniformMatrix4fv(mMatrixLocation, gl.FALSE, m1.elements);
+					}
+					gl.drawArrays(gl.TRIANGLES, 0, 3);
+					
+					m2.setTranslate(0.5, 0.0, 0.0);		
+					m2.scale(0.5, 0.5, 0.5);
+					if (pickMode)
+					{
+						gl.uniformMatrix4fv(pickMMatrixLocation, gl.FALSE, m2.elements);
+						gl.uniform1f(pickIDLocation, 2.0);
+					}
+					else
+					{
+						gl.uniformMatrix4fv(mMatrixLocation, gl.FALSE, m2.elements);
+					}
+					gl.drawArrays(gl.TRIANGLES, 0, 3);
+				}
+				
+				var tick = function() {
+					gl.useProgram(program);
+					gl.enable(gl.BLEND);
+					gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+					draw();
+					
+					requestAnimationFrame(tick);
+				}
+				
+				tick();
+				
+				//pick	
+				var pickFBO = gl.createFramebuffer();
+				var pickTexture = gl.createTexture();
+				gl.bindTexture(gl.TEXTURE_2D, pickTexture);
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1920, 900, 0, gl.RGBA, gl.FLOAT, null);
+				
+				var depthBuffer=gl.createRenderbuffer();
+				gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
+				gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 1920, 900);
+				
+				gl.bindFramebuffer(gl.FRAMEBUFFER, pickFBO);
+				gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickTexture, 0);
+				gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthBuffer);
+				
+				var status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+				if (status !== gl.FRAMEBUFFER_COMPLETE) {
+					console.log("The created frame buffer is invalid: " + status.toString());
+				}
+				
+				gl.bindTexture(gl.TEXTURE_2D, null);
+				gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+				  
+				//注册鼠标点击事件
+				canvas.onmousedown = function(ev)
+				{
+					var rect = canvas.getBoundingClientRect();
+					var x = ev.clientX - rect.left;
+					var y = ev.clientY - rect.top;
+				
+					gl.bindFramebuffer(gl.FRAMEBUFFER, pickFBO);
+					gl.useProgram(pickProgram);
+					gl.disable(gl.BLEND);
+					draw(true);
+					
+					var data = new Float32Array(4);
+					gl.readPixels(x, canvas.height - y, 1, 1, gl.RGBA, gl.FLOAT, data);
+					
+					alert("id: " + data[0] + ", position: " + data[1] + "," + data[2] + ", " + data[3]);
+					
+					gl.bindFramebuffer(gl.FRAMEBUFFER, undefined);
+				}
+			}
+		</script>
+	</body>
+</html>

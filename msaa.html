@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>OffScreen MSAA</title>
+		<style>
+		</style>
+	</head>
+	
+	<body onload="main()">
+		<canvas id="webgl", width="1920", height="900">
+			Please use a browser that supports "canvas"
+		</canvas>
+		<script src="./lib/webgl-utils.js"></script>
+		<script src="./lib/webgl-debug.js"></script>
+		<script src="./lib/cuon-utils.js"></script>
+		<script src="./lib/cuon-matrix.js"></script>
+		<script>
+			var VSHADER_SOURCE = 
+				'attribute vec4 a_Position;'+
+				'void main()'+
+				'{'+
+				'	gl_Position = a_Position;'+
+				'}';
+
+			var FSHADER_SOURCE = 
+				'precision mediump float;'+
+				'void main()'+
+				'{'+
+				'	gl_FragColor = vec4(1.0, 1.0, 0.0, 0.5);'+
+				'}';
+
+			function main() {
+				var canvas = document.getElementById('webgl');
+				if (!canvas){
+					console.log('Failed to retrieve the <canvas> element');
+					return;
+				}
+
+				var gl = getWebGLContext(canvas, {antialias: false});
+				if (!gl){
+					console.log('Failed to get the rendering context for WebGL');
+					return;
+				}
+				
+				var program = initShaders(gl, VSHADER_SOURCE, FSHADER_SOURCE);
+				if (!program){
+					console.log('Failed to initialize shaders.');
+					return;
+				}
+				
+				//准备多采样的 msFbo
+				var msFbo = gl.createFramebuffer();
+				var colorRenderbuffer = gl.createRenderbuffer();
+				gl.bindRenderbuffer(gl.RENDERBUFFER, colorRenderbuffer);
+				gl.renderbufferStorageMultisample(gl.RENDERBUFFER, 8, gl.RGBA8, canvas.width, canvas.height);
+				
+				gl.bindFramebuffer(gl.FRAMEBUFFER, msFbo);
+				gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, colorRenderbuffer);
+				
+				var status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+				if (status !== gl.FRAMEBUFFER_COMPLETE) {
+					console.log("The created frame buffer is invalid: " + status.toString());
+				}
+				
+				gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+				
+				//准备中转的tempFbo
+				var tempFbo = gl.createFramebuffer();
+				var quadTexture = gl.createTexture();
+				gl.bindTexture(gl.TEXTURE_2D, quadTexture);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+				gl.bindTexture(gl.TEXTURE_2D, null);
+				
+				gl.bindFramebuffer(gl.FRAMEBUFFER, tempFbo);
+				gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, quadTexture, 0);
+				status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+				if (status !== gl.FRAMEBUFFER_COMPLETE) {
+					console.log("The created frame buffer is invalid: " + status.toString());
+				}
+				gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+				
+				//准备三角形网格顶点数据
+				var vertices = new Float32Array([-0.5, -0.5, 0.5, -0.5, 0.0, 1.0]);
+				var vertexBuffer = gl.createBuffer();
+				if (!vertexBuffer)
+				{
+					console.log('Failed to create vertex buffer');
+					return;
+				}
+				
+				gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+				gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+				
+				var a_Position = gl.getAttribLocation(gl.program, 'a_Position');
+				if (a_Position < 0)
+				{
+					console.log('Failed to get the storage location of a_Position');
+					return;
+				}
+				
+				gl.vertexAttribPointer(a_Position, 2, gl.FLOAT, false, 0, 0);
+				gl.enableVertexAttribArray(a_Position);
+				
+				var draw = function() {
+					gl.bindFramebuffer(gl.FRAMEBUFFER, msFbo);
+					gl.clearColor(0, 0, 0, 1);
+					gl.clear(gl.COLOR_BUFFER_BIT);
+					
+					gl.drawArrays(gl.TRIANGLES, 0, 3);
+					
+					gl.bindFramebuffer(gl.READ_FRAMEBUFFER, msFbo);
+					gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+					gl.blitFramebuffer(0, 0, canvas.width, canvas.height,
+						0, 0, canvas.width, canvas.height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+				}
+				
+				var tick = function() {
+					gl.useProgram(program);
+					gl.enable(gl.BLEND);
+					gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+					draw();
+					
+					requestAnimationFrame(tick);
+				}
+				
+				tick();
+			}
+		</script>
+	</body>
+</html>
